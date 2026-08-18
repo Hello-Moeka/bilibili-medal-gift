@@ -4,19 +4,29 @@
 
 ## 快速开始
 
-1. 复制 `.env.example` 为 `.env`，填入你的 `SESSDATA`、`bili_jct`、`DedeUserID`
-   （从浏览器登录 B 站直播后，开发者工具 → Application → Cookies 获取）
-2. 安装依赖：`pip install -r requirements.txt`
-3. 预演（不花钱验证）：`python main.py --dry-run`
-4. 正式运行：`python main.py`
+1. 安装依赖：`pip install -r requirements.txt`
+2. 首次运行：`python main.py --dry-run`
+   - 若没有 `.env`（或 cookie 失效），会自动弹出终端二维码，用哔哩哔哩 APP 扫码登录
+   - 登录成功后 cookie 自动写入 `.env`，下次运行直接复用
+3. 重新登录：`python main.py --login`（强制重新扫码，覆盖旧 cookie）
+4. 预演（不花钱验证）：`python main.py --dry-run`
+5. 正式运行：`python main.py`
 
 ## 参数
 
 | 参数 | 说明 | 默认 |
 |---|---|---|
 | `--dry-run` | 只列出不实际送礼 | 关 |
+| `--login` | 扫码登录重新获取 cookie（覆盖 .env） | 关 |
 | `--min-interval` | 最小送礼间隔秒 | 0.5 |
 | `--max-interval` | 最大送礼间隔秒 | 1.5 |
+
+## 登录说明
+
+- 首次运行或 `.env` 缺失时自动触发扫码登录
+- 终端打印 ASCII 二维码，用哔哩哔哩 APP 扫码并确认
+- 登录成功后 cookie 存入 `.env`，后续运行自动复用，无需重复扫码
+- cookie 失效时重新运行 `--login` 即可
 
 ## 本地记录
 

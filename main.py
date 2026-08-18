@@ -11,40 +11,76 @@ from src.api.follow import get_live_follows
 from src.api.gift import (
     get_medal_gift_price, send_medal_gift, GiftError, is_insufficient_balance,
 )
+from src.api.login import QrLogin, extract_dede_uid, BiliApiError as LoginError
 from src.storage.sent_log import is_sent_today, mark_sent
 
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sent_log.json")
+ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 AUTH_FAIL_CODE = -101
 MAX_CONSEC_AUTH_FAILS = 3
+# 写入 .env 的 cookie 字段白名单（其余无关 cookie 不存）
+ENV_COOKIE_FIELDS = (
+    "SESSDATA", "bili_jct", "DedeUserID", "DedeUserID__ckMd5",
+    "buvid3", "buvid4", "buvid_fp", "fingerprint", "LIVE_BUVID",
+    "bili_ticket", "bili_ticket_expires", "sid", "b_nut", "b_lsid",
+)
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="给在播主播送粉丝团灯牌")
     p.add_argument("--dry-run", action="store_true", help="只列出不实际送礼")
+    p.add_argument("--login", action="store_true", help="扫码登录重新获取 cookie")
     p.add_argument("--min-interval", type=float, default=0.5, help="最小间隔秒（默认0.5）")
     p.add_argument("--max-interval", type=float, default=1.5, help="最大间隔秒（默认1.5）")
     return p.parse_args()
 
 
-def load_cookies() -> dict:
+def save_env(cookies: dict) -> None:
+    """把 cookie 写入 .env 文件（KEY=VALUE 格式，仅存白名单字段）。"""
+    lines = ["# B 站直播 cookie（扫码登录自动生成，勿提交）"]
+    for key in ENV_COOKIE_FIELDS:
+        val = cookies.get(key)
+        if val:
+            lines.append(f"{key}={val}")
+    tmp = ENV_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    os.replace(tmp, ENV_FILE)
+
+
+def login_flow() -> dict:
+    """命令行扫码登录，成功后写入 .env，返回 cookie dict。"""
+    print("启动扫码登录...")
+    login = QrLogin()
+    try:
+        login.generate()
+        cookies = login.wait_for_login(timeout=180)
+        save_env(cookies)
+        print(f"\n登录成功，cookie 已写入 .env（DedeUserID={extract_dede_uid(cookies)}）")
+        return cookies
+    finally:
+        login.close()
+
+
+def load_cookies(force_login: bool = False) -> dict:
     base = os.path.dirname(os.path.abspath(__file__))
-    # 只读 .env 文件内容作为 cookie，不混入系统环境变量
-    cookies = {k: v for k, v in dotenv_values(os.path.join(base, ".env")).items()
-               if v and not k.startswith("__")}
-    # 校验三个关键字段
-    missing = [k for k in ("SESSDATA", "bili_jct", "DedeUserID") if not cookies.get(k)]
-    if missing:
-        print(f"错误：.env 缺少 {' / '.join(missing)}，请参考 .env.example 填写")
-        sys.exit(1)
-    return cookies
+    env_path = os.path.join(base, ".env")
+    if not force_login and os.path.exists(env_path):
+        cookies = {k: v for k, v in dotenv_values(env_path).items()
+                   if v and not k.startswith("__")}
+        missing = [k for k in ("SESSDATA", "bili_jct", "DedeUserID") if not cookies.get(k)]
+        if not missing:
+            return cookies
+        print(f".env 缺少 {' / '.join(missing)}，转入扫码登录")
+    return login_flow()
 
 
 def main():
     args = parse_args()
-    cookies = load_cookies()
-    dede_uid = int(cookies["DedeUserID"])
+    cookies = load_cookies(force_login=args.login)
+    dede_uid = int(cookies.get("DedeUserID", 0) or 0)
     if not dede_uid:
-        print("错误：.env 缺少 DedeUserID")
+        print("错误：登录后未获取到 DedeUserID")
         sys.exit(1)
 
     with BiliClient(cookies=cookies) as client:
