@@ -4,7 +4,7 @@ import random
 import sys
 import time
 
-from dotenv import load_dotenv
+from dotenv import dotenv_values
 
 from src.api.client import BiliClient, BiliApiError, BiliNetworkError
 from src.api.follow import get_live_follows
@@ -27,23 +27,22 @@ def parse_args():
 
 
 def load_cookies() -> dict:
-    load_dotenv()
-    sessdata = os.getenv("SESSDATA")
-    bili_jct = os.getenv("bili_jct")
-    if not sessdata or not bili_jct:
-        print("错误：.env 缺少 SESSDATA 或 bili_jct，请参考 .env.example 填写")
+    base = os.path.dirname(os.path.abspath(__file__))
+    # 只读 .env 文件内容作为 cookie，不混入系统环境变量
+    cookies = {k: v for k, v in dotenv_values(os.path.join(base, ".env")).items()
+               if v and not k.startswith("__")}
+    # 校验三个关键字段
+    missing = [k for k in ("SESSDATA", "bili_jct", "DedeUserID") if not cookies.get(k)]
+    if missing:
+        print(f"错误：.env 缺少 {' / '.join(missing)}，请参考 .env.example 填写")
         sys.exit(1)
-    cookies = {"SESSDATA": sessdata, "bili_jct": bili_jct}
-    dede = os.getenv("DedeUserID")
-    if dede:
-        cookies["DedeUserID"] = dede
     return cookies
 
 
 def main():
     args = parse_args()
     cookies = load_cookies()
-    dede_uid = int(os.getenv("DedeUserID") or 0)
+    dede_uid = int(cookies["DedeUserID"])
     if not dede_uid:
         print("错误：.env 缺少 DedeUserID")
         sys.exit(1)
