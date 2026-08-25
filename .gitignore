@@ -1,5 +1,6 @@
 .env
 sent_log.json
+gift_price_cache.json
 __pycache__/
 *.pyc
 .venv/

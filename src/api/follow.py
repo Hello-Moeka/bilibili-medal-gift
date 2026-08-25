@@ -7,22 +7,29 @@ _GET_WEB_LIST_URL = "https://api.live.bilibili.com/xlive/web-ucenter/v1/xfetter/
 _LIVE_LIVING = 1
 _LIVE_OFFLINE = 0
 
+# 翻页硬上限：防御性保护，避免接口异常导致无谓多翻
+_MAX_PAGES = 50
+# 显式传 page_size，减少翻页次数（接口默认偏小）
+_DEFAULT_PAGE_SIZE = 50
 
-def get_live_follows(client: BiliClient) -> List[dict]:
+
+def get_live_follows(client: BiliClient, page_size: int = _DEFAULT_PAGE_SIZE) -> List[dict]:
     """翻页取在播主播。page 从 1 起。
 
     语义：仅收入 live_status==1（直播中）；轮播(2)跳过但继续翻页；
-    遇到首个未开播(0)即停止翻页。终止条件有三（任一满足即停）：
+    遇到首个未开播(0)即停止翻页。终止条件有四（任一满足即停）：
       1. 遇到未开播主播
       2. 本页 rooms 为空（无更多数据）
       3. 已收集数量 >= count（关注列表的在播总数已取完）
+      4. page 超过 _MAX_PAGES（硬上限，防御接口异常）
     返回列表，每项 {"uid", "uname", "room_id"}。
     """
     result = []
     page = 1
     total_live = None
-    while True:
-        resp = client.get(_GET_WEB_LIST_URL, params={"page": page})
+    while page <= _MAX_PAGES:
+        resp = client.get(_GET_WEB_LIST_URL,
+                          params={"page": page, "page_size": page_size})
         data = parse_json(resp)
         if data.get("code") != 0:
             raise BiliApiError(data.get("code", -1),

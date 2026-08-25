@@ -1,10 +1,19 @@
 import httpx
 import pytest
 from unittest.mock import MagicMock
+import src.api.gift as gift_mod
 from src.api.gift import (
     get_medal_gift_price, send_medal_gift, GiftError,
     is_insufficient_balance, MEDAL_GIFT_ID,
 )
+
+
+@pytest.fixture
+def isolated_cache(monkeypatch, tmp_path):
+    """把 gift price 缓存文件指向 tmp_path，测试间互不干扰。"""
+    cache_path = str(tmp_path / "gift_price_cache.json")
+    monkeypatch.setattr(gift_mod, "GIFT_PRICE_CACHE_FILE", cache_path)
+    return cache_path
 
 
 def _mock_get_client(json_body):
@@ -15,7 +24,7 @@ def _mock_get_client(json_body):
     return client
 
 
-def test_get_price_finds_medal():
+def test_get_price_finds_medal(isolated_cache):
     body = {"code": 0, "data": {"list": [
         {"id": 31039, "name": "牛哇牛哇", "price": 100},
         {"id": MEDAL_GIFT_ID, "name": "粉丝团灯牌", "price": 1000},
@@ -24,13 +33,26 @@ def test_get_price_finds_medal():
     assert get_medal_gift_price(client) == 1000
 
 
-def test_get_price_not_found_raises():
+def test_get_price_not_found_raises(isolated_cache):
     body = {"code": 0, "data": {"list": [
         {"id": 31039, "name": "牛哇牛哇", "price": 100},
     ]}}
     client = _mock_get_client(body)
     with pytest.raises(Exception):
         get_medal_gift_price(client)
+
+
+def test_get_price_uses_cache_on_second_call(isolated_cache):
+    """第二次调用应直接命中缓存，不再请求 API。"""
+    body = {"code": 0, "data": {"list": [
+        {"id": MEDAL_GIFT_ID, "name": "粉丝团灯牌", "price": 1000},
+    ]}}
+    client = _mock_get_client(body)
+    assert get_medal_gift_price(client) == 1000
+    assert client.get.call_count == 1
+    # 第二次：缓存命中，不应再次请求 API
+    assert get_medal_gift_price(client) == 1000
+    assert client.get.call_count == 1
 
 
 def test_send_gift_success():

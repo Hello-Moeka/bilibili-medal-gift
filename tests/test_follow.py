@@ -92,3 +92,29 @@ def test_stops_when_no_more_pages():
     ])
     result = get_live_follows(client)
     assert result == [{"uid": 1, "uname": "A", "room_id": 10}]
+
+
+def test_hard_cap_prevents_infinite_pagination(monkeypatch):
+    """接口异常永不返回终止信号时，硬上限应兜底停止翻页。"""
+    import src.api.follow as follow_mod
+    # 放大上限以缩短测试，验证硬上限逻辑本身
+    monkeypatch.setattr(follow_mod, "_MAX_PAGES", 3)
+    # 每页都返回全直播中、count 极大，永不触发常规终止条件
+    page_body = {"code": 0, "data": {"rooms": [
+        {"uid": 1, "uname": "A", "room_id": 10, "live_status": 1},
+    ], "count": 99999}}
+    client = _mock_client([page_body, page_body, page_body])
+    result = get_live_follows(client)
+    # 最多翻 _MAX_PAGES 页（3），每页收 1 个 → 3 个
+    assert len(result) == 3
+    assert client.get.call_count == 3
+
+
+def test_page_size_passed_in_params():
+    """显式 page_size 应进入请求参数。"""
+    client = _mock_client([{
+        "code": 0, "data": {"rooms": [], "count": 0}
+    }])
+    get_live_follows(client, page_size=50)
+    _, kwargs = client.get.call_args
+    assert kwargs["params"]["page_size"] == 50
