@@ -68,3 +68,24 @@ def filter_by_min_level(hosts, medal_levels: Dict[int, int],
             out["medal_level"] = level
             filtered_out.append(out)
     return qualified, filtered_out
+
+
+def filter_no_medal(hosts, medal_levels: Dict[int, int]):
+    """只保留没有粉丝牌的主播，与 filter_by_min_level 相反。
+
+    返回 (qualified, filtered_out)，均保持原顺序；
+    filtered_out 会带 reason 和 medal_level 字段。
+    """
+    qualified = []
+    filtered_out = []
+    for host in hosts:
+        uid = host.get("uid")
+        level = medal_levels.get(uid)
+        if level is None:
+            qualified.append(host)
+        else:
+            out = dict(host)
+            out["reason"] = f"已有粉丝牌（{level} 级）"
+            out["medal_level"] = level
+            filtered_out.append(out)
+    return qualified, filtered_out

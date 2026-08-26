@@ -2,7 +2,9 @@ import httpx
 import pytest
 from unittest.mock import MagicMock
 import src.api.medal as medal_mod
-from src.api.medal import get_medal_levels, filter_by_min_level
+from src.api.medal import (
+    get_medal_levels, filter_by_min_level, filter_no_medal,
+)
 from src.api.client import BiliApiError
 
 
@@ -166,3 +168,38 @@ def test_filter_preserves_order():
     qualified, filtered = filter_by_min_level(hosts, levels, min_level=15)
     assert [h["uid"] for h in qualified] == [2]
     assert [h["uid"] for h in filtered] == [1, 3]
+
+
+# ---- filter_no_medal ----
+
+def test_no_medal_keeps_unbadged_only():
+    hosts = [
+        {"uid": 1, "uname": "A", "room_id": 10},
+        {"uid": 2, "uname": "B", "room_id": 20},
+        {"uid": 3, "uname": "C", "room_id": 30},
+    ]
+    levels = {1: 40, 2: 1}
+    qualified, filtered = filter_no_medal(hosts, levels)
+    assert [h["uid"] for h in qualified] == [3]
+    assert [h["uid"] for h in filtered] == [1, 2]
+
+
+def test_no_medal_filters_all_badged():
+    hosts = [
+        {"uid": 1, "uname": "A", "room_id": 10},
+        {"uid": 2, "uname": "B", "room_id": 20},
+    ]
+    levels = {1: 40, 2: 1}
+    qualified, filtered = filter_no_medal(hosts, levels)
+    assert qualified == []
+    assert [h["uid"] for h in filtered] == [1, 2]
+    assert filtered[0]["reason"] == "已有粉丝牌（40 级）"
+    assert filtered[0]["medal_level"] == 40
+    assert filtered[1]["reason"] == "已有粉丝牌（1 级）"
+
+
+def test_no_medal_empty_levels_returns_all():
+    hosts = [{"uid": 1, "uname": "A", "room_id": 10}]
+    qualified, filtered = filter_no_medal(hosts, {})
+    assert [h["uid"] for h in qualified] == [1]
+    assert filtered == []

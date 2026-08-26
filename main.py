@@ -13,7 +13,9 @@ from src.api.gift import (
     get_medal_gift_price, send_medal_gift, GiftError, is_insufficient_balance,
 )
 from src.api.login import QrLogin, extract_dede_uid, BiliApiError as LoginError
-from src.api.medal import get_medal_levels, filter_by_min_level
+from src.api.medal import (
+    get_medal_levels, filter_by_min_level, filter_no_medal,
+)
 from src.storage.sent_log import is_sent_today, mark_sent
 
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sent_log.json")
@@ -36,6 +38,8 @@ def parse_args():
     p.add_argument("--max-interval", type=float, default=1.5, help="最大间隔秒（默认1.5）")
     p.add_argument("--min-medal-level", type=int, default=None,
                    help="粉丝牌最低等级才送礼（默认：关注模式15，分区模式不过滤）")
+    p.add_argument("--only-no-medal", action="store_true",
+                   help="只给没有粉丝牌的主播送礼（与 --min-medal-level 互斥）")
     p.add_argument("--all-area", nargs="?", const=9, type=int, default=None,
                    metavar="PARENT_ID",
                    help="遍历指定父分区全部在播主播送礼（默认值 9=虚拟主播；"
@@ -91,9 +95,15 @@ def main():
         print("错误：登录后未获取到 DedeUserID")
         sys.exit(1)
 
+    # 参数互斥校验；仅无牌模式下忽略等级阈值
+    if args.only_no_medal and args.min_medal_level is not None:
+        print("错误：--only-no-medal 与 --min-medal-level 互斥，请只传一个")
+        sys.exit(1)
+
     # 粉丝牌等级阈值默认值：分区模式不过滤（0），关注模式 15
-    min_level = (args.min_medal_level if args.min_medal_level is not None
-                 else (0 if args.all_area is not None else 15))
+    min_level = 0 if args.only_no_medal else (
+        args.min_medal_level if args.min_medal_level is not None
+        else (0 if args.all_area is not None else 15))
 
     with BiliClient(cookies=cookies) as client:
         # 1. 取在播列表（关注列表 或 指定分区）
@@ -126,21 +136,27 @@ def main():
               f"今日已送 {len(skipped)} 个，待送 {len(to_send)} 个"
               f"（间隔 {args.min_interval}-{args.max_interval}s）")
 
-        # 3. 粉丝牌等级过滤（默认值：关注模式 15，分区模式不过滤）
-        if min_level > 0:
-            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
-                  f"正在获取粉丝牌等级（阈值 {min_level}）...")
+        # 3. 粉丝牌过滤：仅无牌优先于等级阈值；两者皆无则不拉取
+        if args.only_no_medal or min_level > 0:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 正在获取粉丝牌数据...")
             try:
                 medal_levels = get_medal_levels(client)
             except (BiliApiError, BiliNetworkError) as e:
                 print(f"获取粉丝牌等级失败: {e}")
                 return
-            to_send, filtered_out = filter_by_min_level(
-                to_send, medal_levels, min_level)
-            for h in filtered_out:
+            if args.only_no_medal:
+                to_send, filtered_out = filter_no_medal(to_send, medal_levels)
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
+                      f"无粉丝牌 {len(to_send)} 个，跳过已有牌 {len(filtered_out)} 个")
+            else:
+                to_send, filtered_out = filter_by_min_level(
+                    to_send, medal_levels, min_level)
+                print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
+                      f"等级达标 {len(to_send)} 个，过滤 {len(filtered_out)} 个")
+            for h in filtered_out[:50]:
                 print(f"  [跳过] {h['uname']} (room {h['room_id']}) — {h['reason']}")
-            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
-                  f"等级达标 {len(to_send)} 个，过滤 {len(filtered_out)} 个")
+            if len(filtered_out) > 50:
+                print(f"  [跳过] ... 其余 {len(filtered_out) - 50} 个省略")
 
         # 4. 预演模式
         if args.dry_run:
