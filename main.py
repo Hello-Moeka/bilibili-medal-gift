@@ -8,6 +8,7 @@ from dotenv import dotenv_values
 
 from src.api.client import BiliClient, BiliApiError, BiliNetworkError
 from src.api.follow import get_live_follows
+from src.api.area import get_area_live_rooms
 from src.api.gift import (
     get_medal_gift_price, send_medal_gift, GiftError, is_insufficient_balance,
 )
@@ -33,8 +34,12 @@ def parse_args():
     p.add_argument("--login", action="store_true", help="扫码登录重新获取 cookie")
     p.add_argument("--min-interval", type=float, default=0.5, help="最小间隔秒（默认0.5）")
     p.add_argument("--max-interval", type=float, default=1.5, help="最大间隔秒（默认1.5）")
-    p.add_argument("--min-medal-level", type=int, default=15,
-                   help="粉丝牌最低等级才送礼（默认15，设0为不过滤）")
+    p.add_argument("--min-medal-level", type=int, default=None,
+                   help="粉丝牌最低等级才送礼（默认：关注模式15，分区模式不过滤）")
+    p.add_argument("--all-area", nargs="?", const=9, type=int, default=None,
+                   metavar="PARENT_ID",
+                   help="遍历指定父分区全部在播主播送礼（默认值 9=虚拟主播；"
+                        "非预演会要求输入 yes 确认花费）")
     return p.parse_args()
 
 
@@ -86,14 +91,27 @@ def main():
         print("错误：登录后未获取到 DedeUserID")
         sys.exit(1)
 
+    # 粉丝牌等级阈值默认值：分区模式不过滤（0），关注模式 15
+    min_level = (args.min_medal_level if args.min_medal_level is not None
+                 else (0 if args.all_area is not None else 15))
+
     with BiliClient(cookies=cookies) as client:
-        # 1. 取在播列表
-        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 正在获取在播主播列表...")
-        try:
-            live_list = get_live_follows(client)
-        except (BiliApiError, BiliNetworkError) as e:
-            print(f"获取在播列表失败: {e}")
-            return
+        # 1. 取在播列表（关注列表 或 指定分区）
+        if args.all_area is not None:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
+                  f"正在获取分区 {args.all_area} 全部在播主播（翻页较慢）...")
+            try:
+                live_list = get_area_live_rooms(client, parent_id=args.all_area)
+            except (BiliApiError, BiliNetworkError) as e:
+                print(f"获取分区列表失败: {e}")
+                return
+        else:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] 正在获取关注在播主播列表...")
+            try:
+                live_list = get_live_follows(client)
+            except (BiliApiError, BiliNetworkError) as e:
+                print(f"获取在播列表失败: {e}")
+                return
 
         # 2. 去重
         skipped = []
@@ -108,17 +126,17 @@ def main():
               f"今日已送 {len(skipped)} 个，待送 {len(to_send)} 个"
               f"（间隔 {args.min_interval}-{args.max_interval}s）")
 
-        # 3. 粉丝牌等级过滤
-        if args.min_medal_level > 0:
+        # 3. 粉丝牌等级过滤（默认值：关注模式 15，分区模式不过滤）
+        if min_level > 0:
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
-                  f"正在获取粉丝牌等级（阈值 {args.min_medal_level}）...")
+                  f"正在获取粉丝牌等级（阈值 {min_level}）...")
             try:
                 medal_levels = get_medal_levels(client)
             except (BiliApiError, BiliNetworkError) as e:
                 print(f"获取粉丝牌等级失败: {e}")
                 return
             to_send, filtered_out = filter_by_min_level(
-                to_send, medal_levels, args.min_medal_level)
+                to_send, medal_levels, min_level)
             for h in filtered_out:
                 print(f"  [跳过] {h['uname']} (room {h['room_id']}) — {h['reason']}")
             print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
@@ -138,6 +156,18 @@ def main():
         except BiliApiError as e:
             print(f"获取灯牌价格失败: {e}")
             return
+
+        # 5.5 分区模式大额花费确认（预计金额 = 价格 × 待送数 / 1000 元）
+        if args.all_area is not None and not args.dry_run:
+            est_yuan = price * len(to_send) / 1000
+            print(f"⚠️  即将向分区 {args.all_area} 的 {len(to_send)} 个在播主播"
+                  f"各送 1 个灯牌")
+            print(f"    预计花费约 {est_yuan:.1f} 元（{price * len(to_send)} 金瓜子），"
+                  f"不可撤销。输入 yes 继续：")
+            ans = input().strip().lower()
+            if ans != "yes":
+                print("已取消，未送出任何礼物")
+                return
 
         # 6. 逐个送礼
         success = 0
