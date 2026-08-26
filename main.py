@@ -12,6 +12,7 @@ from src.api.gift import (
     get_medal_gift_price, send_medal_gift, GiftError, is_insufficient_balance,
 )
 from src.api.login import QrLogin, extract_dede_uid, BiliApiError as LoginError
+from src.api.medal import get_medal_levels, filter_by_min_level
 from src.storage.sent_log import is_sent_today, mark_sent
 
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sent_log.json")
@@ -32,6 +33,8 @@ def parse_args():
     p.add_argument("--login", action="store_true", help="扫码登录重新获取 cookie")
     p.add_argument("--min-interval", type=float, default=0.5, help="最小间隔秒（默认0.5）")
     p.add_argument("--max-interval", type=float, default=1.5, help="最大间隔秒（默认1.5）")
+    p.add_argument("--min-medal-level", type=int, default=15,
+                   help="粉丝牌最低等级才送礼（默认15，设0为不过滤）")
     return p.parse_args()
 
 
@@ -105,14 +108,30 @@ def main():
               f"今日已送 {len(skipped)} 个，待送 {len(to_send)} 个"
               f"（间隔 {args.min_interval}-{args.max_interval}s）")
 
-        # 3. 预演模式
+        # 3. 粉丝牌等级过滤
+        if args.min_medal_level > 0:
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
+                  f"正在获取粉丝牌等级（阈值 {args.min_medal_level}）...")
+            try:
+                medal_levels = get_medal_levels(client)
+            except (BiliApiError, BiliNetworkError) as e:
+                print(f"获取粉丝牌等级失败: {e}")
+                return
+            to_send, filtered_out = filter_by_min_level(
+                to_send, medal_levels, args.min_medal_level)
+            for h in filtered_out:
+                print(f"  [跳过] {h['uname']} (room {h['room_id']}) — {h['reason']}")
+            print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
+                  f"等级达标 {len(to_send)} 个，过滤 {len(filtered_out)} 个")
+
+        # 4. 预演模式
         if args.dry_run:
             for h in to_send:
                 print(f"  [预演] 将送：{h['uname']} (room {h['room_id']})")
             print("==== 预演结束（未实际送礼）====")
             return
 
-        # 4. 取灯牌价格
+        # 5. 取灯牌价格
         try:
             price = get_medal_gift_price(client)
             print(f"灯牌价格: {price} 金瓜子")
@@ -120,7 +139,7 @@ def main():
             print(f"获取灯牌价格失败: {e}")
             return
 
-        # 5. 逐个送礼
+        # 6. 逐个送礼
         success = 0
         fail = 0
         stopped_for_balance = False
@@ -172,7 +191,7 @@ def main():
                 delay = random.uniform(args.min_interval, args.max_interval)
                 time.sleep(delay)
 
-        # 6. 汇总
+        # 7. 汇总
         remaining = len(to_send) - success - fail
         print("==== 汇总 ====")
         print(f"成功: {success}  失败: {fail}  跳过(今日已送): {len(skipped)}"
