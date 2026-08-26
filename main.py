@@ -173,7 +173,7 @@ def main():
             print(f"获取灯牌价格失败: {e}")
             return
 
-        # 5.5 分区模式大额花费确认（预计金额 = 价格 × 待送数 / 1000 元）
+        # 5.5 分区模式大额花费确认（1 元 = 1000 金瓜子）
         if args.all_area is not None and not args.dry_run:
             est_yuan = price * len(to_send) / 1000
             print(f"⚠️  即将向分区 {args.all_area} 的 {len(to_send)} 个在播主播"
